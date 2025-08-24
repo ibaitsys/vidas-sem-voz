@@ -32,7 +32,12 @@
                         <li><a href="#contact">Contato</a></li>
                     </ul>
                 </nav>
-                <a href="#plans" class="btn">Doar Agora</a>
+                <a href="#plans" class="btn d-none-mobile">Doar Agora</a>
+                <button class="menu-toggle" aria-label="Menu">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </button>
             </div>
         </div>
     </header>
@@ -102,11 +107,11 @@
                 <!-- Plano Básico -->
                 <div class="plan-card">
                     <div class="plan-header">
-                        <h3>Amigo dos Peludos</h3>
+                        <h3>Amigos Peludos</h3>
                     </div>
                     <div class="plan-price">
                         <span class="price-currency">R$</span>
-                        <span class="price-amount">30</span>
+                        <span class="price-amount">20</span>
                         <span class="price-period">/mês</span>
                     </div>
                     <div class="plan-features">
@@ -174,12 +179,7 @@
             </div>
 
             <div class="payment-options">
-                <p>Ou <a href="#" class="custom-donation">clique aqui</a> para doar um valor personalizado</p>
-                <div class="payment-logos">
-                    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/MercadoPago_Logo_01.png/1200px-MercadoPago_Logo_01.png" alt="Mercado Pago">
-                    <img src="https://logodownload.org/wp-content/uploads/2020/04/pagseguro-logo-0-1.png" alt="PagSeguro">
-                    <img src="https://logodownload.org/wp-content/uploads/2020/08/picpay-logo-0.png" alt="PicPay">
-                </div>
+                <p><a href="#" class="custom-donation">Clique aqui</a> para doar um valor personalizado</p>
             </div>
         </div>
     </section>
@@ -194,7 +194,7 @@
                 <!-- História 1 -->
                 <div class="story-card">
                     <div class="story-image">
-                        <img src="https://images.unsplash.com/photo-1583511655826-057004d788cd?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80" alt="Cachorro Thor">
+                        <img src="https://i0.statig.com.br/bancodeimagens/2f/ym/i8/2fymi85z5vo5pcl5rsnsr3xgi.jpg" alt="Cachorro Caramelo">
                     </div>
                     <div class="story-content">
                         <h3>Thor</h3>
@@ -224,7 +224,7 @@
                 <!-- História 3 -->
                 <div class="story-card">
                     <div class="story-image">
-                        <img src="https://images.unsplash.com/photo-1583337130417-3346c0ff0a65?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80" alt="Cachorro Rex">
+                        <img src="https://images.unsplash.com/photo-1558322394-4d8813ceef8a?ixlib=rb-1.2.1&ixid=MnwyNTE2NnwwfDF8c2VhcmNofDIwfHxzdHJheSUyMGRvZ3xlbnwwfHx8fDE2NDQyNDgzOTM&q=85&w=2160" alt="Cachorro Preto Vira-lata">
                     </div>
                     <div class="story-content">
                         <h3>Rex</h3>
@@ -363,5 +363,6 @@
     </footer>
 
     <script src="assets/js/main.js"></script>
+    <script src="assets/js/mobile-menu.js"></script>
 </body>
 </html>
