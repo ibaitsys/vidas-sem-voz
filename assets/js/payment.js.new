@@ -1,0 +1,553 @@
+// Payment Form Handler for Vidas Sem Voz
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize the payment form
+    initPaymentForm();
+    
+    // Initialize amount selection
+    initAmountSelection();
+    
+    // Initialize payment method tabs
+    initPaymentMethodTabs();
+    
+    // Initialize form validation
+    initFormValidation();
+    
+    // Initialize installments calculation
+    initInstallments();
+});
+
+// Global variables
+let pagarme = null;
+let currentAmount = 0;
+
+/**
+ * Initialize the payment form with event listeners
+ */
+function initPaymentForm() {
+    const donationForm = document.getElementById('donationForm');
+    if (!donationForm) return;
+    
+    // Initialize Pagar.me with public key
+    try {
+        pagarme = PagarMeCheckout.Checkout({
+            encryption_key: document.body.getAttribute('data-pagarme-encryption-key') || 'YOUR_ENCRYPTION_KEY',
+            success: handlePaymentSuccess,
+            error: handlePaymentError,
+            close: handlePaymentClose
+        });
+    } catch (error) {
+        console.error('Error initializing Pagar.me:', error);
+        showError('Erro ao inicializar o sistema de pagamentos. Por favor, tente novamente mais tarde.');
+    }
+    
+    // Add form submit handler
+    donationForm.addEventListener('submit', handleFormSubmit);
+}
+
+/**
+ * Handle form submission
+ * @param {Event} e - Form submit event
+ */
+async function handleFormSubmit(e) {
+    e.preventDefault();
+    
+    const form = e.target;
+    const submitBtn = form.querySelector('button[type="submit"]');
+    const originalBtnText = submitBtn.innerHTML;
+    
+    // Show loading state
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processando...';
+    
+    try {
+        // Get form data
+        const formData = new FormData(form);
+        const paymentMethod = formData.get('paymentMethod');
+        const amount = parseFloat(formData.get('amount'));
+        
+        // Validate amount
+        if (isNaN(amount) || amount < 5) {
+            throw new Error('O valor mínimo para doação é R$ 5,00.');
+        }
+        
+        // Validate terms acceptance
+        if (!document.getElementById('terms').checked) {
+            throw new Error('Você precisa aceitar os termos e condições para continuar.');
+        }
+        
+        // Prepare transaction data
+        const transactionData = {
+            amount: Math.round(amount * 100), // Convert to cents
+            payment_method: paymentMethod,
+            customer: {
+                external_id: '#' + Math.random().toString(36).substr(2, 9),
+                name: formData.get('name'),
+                email: formData.get('email'),
+                documents: [{
+                    type: 'cpf',
+                    number: formData.get('cpf').replace(/\D/g, '')
+                }],
+                phone_numbers: ['+55' + (formData.get('phone') || '').replace(/\D/g, '')],
+                type: 'individual'
+            },
+            billing: {
+                name: formData.get('name'),
+                address: {
+                    country: 'br',
+                    state: 'SP',
+                    city: 'São Paulo',
+                    street: 'Rua dos Bobos',
+                    street_number: '0',
+                    zipcode: '00000000'
+                }
+            },
+            items: [{
+                id: 'donation',
+                title: 'Doação Vidas Sem Voz',
+                unit_price: Math.round(amount * 100),
+                quantity: 1,
+                tangible: false
+            }],
+            metadata: {
+                anonymous: formData.get('anonymous') === 'on' ? 'yes' : 'no',
+                campaign: 'website-donation',
+                recurring: formData.get('recurring') === 'on' ? 'monthly' : 'one-time'
+            }
+        };
+        
+        // Handle credit card payment
+        if (paymentMethod === 'credit_card') {
+            const card = {
+                card_number: formData.get('cardNumber').replace(/\s/g, ''),
+                card_holder_name: formData.get('cardName'),
+                card_expiration_date: formData.get('cardExpiry').replace(/\//g, ''),
+                card_cvv: formData.get('cardCvv')
+            };
+            
+            // Add installments
+            transactionData.installments = parseInt(formData.get('installments') || '1');
+            
+            // Generate card hash
+            try {
+                const cardHash = await pagarme.client.connect({ 
+                    encryption_key: 'YOUR_ENCRYPTION_KEY' 
+                }).then(client => client.security.encrypt(card));
+                
+                transactionData.card_hash = cardHash;
+            } catch (error) {
+                console.error('Error generating card hash:', error);
+                throw new Error('Erro ao processar os dados do cartão. Verifique as informações e tente novamente.');
+            }
+        }
+        
+        // Send to backend
+        const response = await fetch('/api/payments/create-transaction', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify(transactionData),
+            credentials: 'same-origin'
+        });
+        
+        const result = await response.json();
+        
+        if (!response.ok || !result.success) {
+            let errorMessage = 'Erro ao processar o pagamento. Por favor, tente novamente.';
+            
+            if (result.message) {
+                errorMessage = result.message;
+            } else if (result.errors) {
+                errorMessage = result.errors.map(err => err.message).join('\n');
+            } else if (result.error) {
+                errorMessage = result.error.message || JSON.stringify(result.error);
+            }
+            
+            throw new Error(errorMessage);
+        }
+        
+        // Handle success
+        handlePaymentSuccess(result);
+        
+    } catch (error) {
+        console.error('Payment error:', error);
+        showError(error.message || 'Ocorreu um erro inesperado. Por favor, tente novamente mais tarde.');
+    } finally {
+        // Reset button state
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalBtnText;
+        }
+    }
+}
+
+/**
+ * Handle successful payment
+ * @param {Object} result - Payment result
+ */
+function handlePaymentSuccess(result) {
+    let successMessage = 'Doação realizada com sucesso! Obrigado pelo seu apoio.';
+    
+    // Handle different payment methods
+    switch (result.payment_method) {
+        case 'boleto':
+            successMessage += '\n\nSeu boleto foi gerado com sucesso. ';
+            successMessage += 'Clique no link abaixo para visualizar e imprimir:\n' + (result.payment_url || '');
+            
+            if (result.barcode) {
+                successMessage += '\n\nCódigo de barras: ' + result.barcode;
+            }
+            
+            if (result.payment_url) {
+                window.open(result.payment_url, '_blank');
+            }
+            break;
+            
+        case 'pix':
+            successMessage += '\n\nSeu QR Code PIX foi gerado com sucesso. ';
+            successMessage += 'Escaneie o código abaixo para concluir o pagamento.';
+            
+            if (result.payment_url) {
+                showPixQRCode(result.payment_url);
+            }
+            break;
+            
+        case 'credit_card':
+            successMessage += `\n\nSeu pagamento foi aprovado com sucesso!`;
+            if (result.id) {
+                successMessage += `\nNúmero da transação: ${result.id}`;
+            }
+            if (result.authorization_code) {
+                successMessage += `\nCódigo de autorização: ${result.authorization_code}`;
+            }
+            break;
+    }
+    
+    showSuccess(successMessage);
+    
+    // Track donation
+    trackDonation({
+        transaction_id: result.id || result.transaction_id,
+        amount: result.amount ? result.amount / 100 : 0,
+        payment_method: result.payment_method,
+        ...result
+    });
+    
+    // Reset form
+    const form = document.getElementById('donationForm');
+    if (form && result.payment_method !== 'credit_card') {
+        form.reset();
+    }
+}
+
+/**
+ * Handle payment error
+ * @param {Error} error - Error object
+ */
+function handlePaymentError(error) {
+    console.error('Payment error:', error);
+    showError(error.message || 'Ocorreu um erro ao processar o pagamento. Por favor, tente novamente.');
+}
+
+/**
+ * Handle payment modal close
+ */
+function handlePaymentClose() {
+    console.log('Payment modal closed');
+}
+
+/**
+ * Show success message in a modal
+ * @param {string} message - Success message
+ */
+function showSuccess(message) {
+    // Implementation of showSuccess function
+    console.log('Success:', message);
+    alert(message); // Replace with modal implementation
+}
+
+/**
+ * Show error message in a modal
+ * @param {string} message - Error message
+ */
+function showError(message) {
+    // Implementation of showError function
+    console.error('Error:', message);
+    alert('Erro: ' + message); // Replace with modal implementation
+}
+
+/**
+ * Show PIX QR Code in a modal
+ * @param {string} qrCodeUrl - URL or data for the PIX QR Code
+ */
+function showPixQRCode(qrCodeUrl) {
+    // Implementation of showPixQRCode function
+    console.log('Show PIX QR Code:', qrCodeUrl);
+    // Show modal with QR code
+}
+
+/**
+ * Track donation for analytics
+ * @param {Object} data - Donation data
+ */
+function trackDonation(data) {
+    // Implementation of trackDonation function
+    console.log('Track donation:', data);
+    
+    // Example: Send to Google Analytics
+    if (window.gtag) {
+        gtag('event', 'purchase', {
+            transaction_id: data.transaction_id,
+            value: data.amount,
+            currency: 'BRL',
+            items: [{
+                item_id: 'donation',
+                item_name: 'Doação Vidas Sem Voz',
+                price: data.amount,
+                quantity: 1
+            }]
+        });
+    }
+}
+
+/**
+ * Initialize amount selection
+ */
+function initAmountSelection() {
+    const amountOptions = document.querySelectorAll('.amount-option:not(#custom-amount-option)');
+    const customAmountOption = document.getElementById('custom-amount-option');
+    const customAmountInput = document.getElementById('custom-amount-input');
+    const customAmountRadio = document.getElementById('custom-amount-radio');
+    
+    if (!customAmountOption || !customAmountInput || !customAmountRadio) return;
+    
+    // Handle preset amount selection
+    amountOptions.forEach(option => {
+        option.addEventListener('click', function() {
+            // Remove selected class from all options
+            document.querySelectorAll('.amount-option').forEach(opt => {
+                opt.classList.remove('selected');
+            });
+            
+            // Add selected class to clicked option
+            this.classList.add('selected');
+            
+            // Uncheck custom amount radio if it was checked
+            if (customAmountRadio.checked) {
+                customAmountRadio.checked = false;
+                customAmountInput.value = '';
+            }
+        });
+    });
+    
+    // Handle custom amount input
+    customAmountInput.addEventListener('click', function(e) {
+        e.stopPropagation();
+        customAmountOption.click();
+    });
+    
+    customAmountInput.addEventListener('input', function() {
+        const value = parseFloat(this.value);
+        if (!isNaN(value) && value >= 5) {
+            customAmountRadio.value = value;
+            customAmountRadio.checked = true;
+            
+            // Update display
+            const display = document.getElementById('custom-amount-display');
+            if (display) {
+                display.textContent = `R$ ${value.toFixed(2).replace('.', ',')}`;
+            }
+            
+            // Update installments
+            updateInstallments(value);
+        }
+    });
+    
+    // Handle radio button changes
+    document.querySelectorAll('input[name="amount"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            if (this === customAmountRadio) {
+                customAmountInput.focus();
+            } else {
+                updateInstallments(parseFloat(this.value));
+            }
+        });
+    });
+}
+
+/**
+ * Initialize payment method tabs
+ */
+function initPaymentMethodTabs() {
+    const tabs = document.querySelectorAll('.payment-method-tab');
+    const paymentMethodInput = document.getElementById('paymentMethod');
+    const creditCardFields = document.getElementById('creditCardFields');
+    const pixFields = document.getElementById('pixFields');
+    const boletoFields = document.getElementById('boletoFields');
+    
+    if (!paymentMethodInput || !creditCardFields || !pixFields || !boletoFields) return;
+    
+    tabs.forEach(tab => {
+        tab.addEventListener('click', function() {
+            const method = this.getAttribute('data-method');
+            
+            // Update active tab
+            tabs.forEach(t => t.classList.remove('active'));
+            this.classList.add('active');
+            
+            // Update payment method input
+            paymentMethodInput.value = method;
+            
+            // Show/hide fields based on selected method
+            creditCardFields.style.display = method === 'credit_card' ? 'block' : 'none';
+            pixFields.style.display = method === 'pix' ? 'block' : 'none';
+            boletoFields.style.display = method === 'boleto' ? 'block' : 'none';
+            
+            // Update installments if amount is set
+            if (method === 'credit_card') {
+                const selectedAmount = document.querySelector('input[name="amount"]:checked');
+                if (selectedAmount) {
+                    updateInstallments(parseFloat(selectedAmount.value));
+                }
+            }
+        });
+    });
+}
+
+/**
+ * Initialize form validation
+ */
+function initFormValidation() {
+    // Add input masks
+    const masks = {
+        cpf: '000.000.000-00',
+        phone: '(00) 00000-0000',
+        cardNumber: '0000 0000 0000 0000',
+        cardExpiry: '00/00',
+        cardCvv: '0000'
+    };
+    
+    Object.keys(masks).forEach(key => {
+        const input = document.getElementById(key);
+        if (input) {
+            input.addEventListener('input', function(e) {
+                const value = this.value.replace(/\D/g, '');
+                const mask = masks[key];
+                let maskedValue = '';
+                let index = 0;
+                
+                for (let i = 0; i < mask.length; i++) {
+                    if (index >= value.length) break;
+                    
+                    if (mask[i] === '0') {
+                        maskedValue += value[index];
+                        index++;
+                    } else {
+                        maskedValue += mask[i];
+                    }
+                }
+                
+                this.value = maskedValue;
+                
+                // For card number, detect card brand
+                if (key === 'cardNumber' && pagarme) {
+                    detectCardBrand(value);
+                }
+            });
+        }
+    });
+}
+
+/**
+ * Detect card brand and update UI
+ * @param {string} cardNumber - Card number without formatting
+ */
+function detectCardBrand(cardNumber) {
+    if (!cardNumber || cardNumber.length < 4) {
+        updateCardBrandIcon('');
+        return;
+    }
+    
+    // This is a simplified version - you might want to use a more robust solution
+    const cardBrands = {
+        'visa': /^4/,
+        'mastercard': /^5[1-5]/,
+        'amex': /^3[47]/,
+        'elo': /^(401178|401179|431274|438935|451416|457393|457631|457632|504175|627780|636297|636368|636369)/,
+        'hipercard': /^(606282|3841)/,
+        'diners': /^3(?:0[0-5]|[68][0-9])/,
+        'discover': /^6(?:011|5|4[4-9]|22)/,
+        'jcb': /^(?:2131|1800|35)/
+    };
+    
+    for (const [brand, pattern] of Object.entries(cardBrands)) {
+        if (pattern.test(cardNumber)) {
+            updateCardBrandIcon(brand);
+            return;
+        }
+    }
+    
+    updateCardBrandIcon('');
+}
+
+/**
+ * Update card brand icon in the UI
+ * @param {string} brand - Card brand (visa, mastercard, etc.)
+ */
+function updateCardBrandIcon(brand) {
+    const brandIcon = document.getElementById('card-brand');
+    if (!brandIcon) return;
+    
+    // Clear previous classes
+    brandIcon.className = 'card-brand-icon';
+    
+    if (brand) {
+        brandIcon.classList.add(brand);
+        brandIcon.innerHTML = `<i class="fab fa-cc-${brand}"></i>`;
+    } else {
+        brandIcon.innerHTML = '';
+    }
+}
+
+/**
+ * Initialize installments calculation
+ */
+function initInstallments() {
+    // Set up event listeners for amount changes
+    const amountInputs = document.querySelectorAll('input[name="amount"]');
+    amountInputs.forEach(input => {
+        input.addEventListener('change', function() {
+            if (this.checked && document.getElementById('paymentMethod').value === 'credit_card') {
+                updateInstallments(parseFloat(this.value));
+            }
+        });
+    });
+}
+
+/**
+ * Update installments based on amount
+ * @param {number} amount - Donation amount
+ */
+function updateInstallments(amount) {
+    if (!amount || amount < 5) return;
+    
+    const installmentsSelect = document.getElementById('installments');
+    if (!installmentsSelect) return;
+    
+    // Clear existing options
+    installmentsSelect.innerHTML = '';
+    
+    // Calculate max installments (up to 12x)
+    const maxInstallments = Math.min(Math.floor(amount / 5), 12);
+    
+    // Add installments options
+    for (let i = 1; i <= maxInstallments; i++) {
+        const installmentAmount = (amount / i).toFixed(2);
+        const option = document.createElement('option');
+        option.value = i;
+        option.textContent = `${i}x de R$ ${installmentAmount.replace('.', ',')} ${i === 1 ? 'à vista' : 'sem juros'}`;
+        installmentsSelect.appendChild(option);
+    }
+}
